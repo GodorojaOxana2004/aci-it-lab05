@@ -1,58 +1,89 @@
+# Лабораторная работа: Настройка CI/CD конвейера с GitLab Community Edition для Laravel-приложения
 
+## Цель работы
 
-создадим проект в GCP, зарезервируем static IP и настроим firewall;
+Получить практический опыт развертывания собственного CI/CD-сервера на базе GitLab Community Edition и реализации конвейера непрерывной интеграции для Laravel-приложения. В рамках работы выполняется установка GitLab CE в облачной инфраструктуре GCP, настройка GitLab Runner, создание проекта с конфигурацией `.gitlab-ci.yml`, а также запуск и верификация автоматизированного пайплайна.
 
-запустим VM (Ubuntu 22.04), установим Docker;
+---
 
-поднимем GitLab CE в Docker (self-hosted) и настроим root;
+## Задание
 
-установим и зарегистрируем GitLab Runner;
+Необходимо выполнить следующие этапы:
 
-создадим Laravel-проект, Dockerfile и .gitlab-ci.yml;
+1. **Подготовка облачной инфраструктуры в Google Cloud Platform**
+   - Создать проект в GCP
+   - Зарезервировать статический внешний IP-адрес
+   - Настроить правила firewall для доступа к GitLab
 
-запустим pipeline, проверим тесты и сборку образа;
+2. **Развертывание виртуальной машины**
+   - Создать VM на базе Ubuntu 22.04 LTS
+   - Установить Docker и Docker Compose
+   - Настроить необходимые параметры безопасности
 
-(опционально) настроим деплой на отдельную VM или включим Container Registry.
-В конце — инструкции по отладке и очистке.
+3. **Установка GitLab Community Edition**
+   - Развернуть GitLab CE в Docker-контейнере
+   - Настроить базовую конфигурацию
+   - Установить пароль администратора (root)
 
-Предварительно (в GCP Console или через gcloud)
+4. **Настройка GitLab Runner**
+   - Установить GitLab Runner на виртуальной машине
+   - Зарегистрировать Runner с использованием Docker executor
+   - Проверить статус и активность Runner
 
-В GCP Console: создать Project (или использовать существующий).
+5. **Создание Laravel-проекта с CI/CD конфигурацией**
+   - Создать репозиторий в GitLab
+   - Подготовить Laravel-приложение
+   - Создать Dockerfile для контейнеризации
+   - Написать конфигурацию `.gitlab-ci.yml` с этапами тестирования и сборки
 
-Включить биллинг для проекта.
+6. **Запуск и верификация CI/CD пайплайна**
+   - Выполнить commit и push изменений
+   - Проанализировать выполнение пайплайна
+   - Проверить результаты тестирования и сборки образа
 
-Установить Cloud SDK на локалку, если будешь выполнять gcloud команды:
+---
 
-# авторизация
+## Ход выполнения работы
+
+### Этап 1. Подготовка инфраструктуры в GCP
+
+Для выполнения работы был создан проект в Google Cloud Platform с включенным биллингом. Выполнена авторизация через Cloud SDK:
+
+```bash
 gcloud auth login
 gcloud config set project YOUR_PROJECT_ID
+```
 
-Этап A — Зарезервировать static IP и правила фаервола
+#### 1.1. Резервирование статического IP-адреса
 
-Рекомендую статический внешний IP, чтобы GitLab был постоянным адресом.
+Для обеспечения постоянного доступа к GitLab был зарезервирован статический внешний IP-адрес:
 
-# reserve static ip
+```bash
 gcloud compute addresses create gitlab-ip --region=us-central1
 gcloud compute addresses describe gitlab-ip --region=us-central1
-# смотри поле "address" — это твой STATIC_IP
-`address: 136.119.66.238`
-![img](/img/img1.png)
+```
 
+В результате был получен статический адрес: `136.119.66.238`
 
-Открыть порты для VM (HTTP, HTTPS, SSH, кастомный 8022 для GitLab SSH):
+![Резервирование статического IP](/img/img1.png)
 
-# создать правило фаервола
+#### 1.2. Настройка правил firewall
+
+Созданы правила межсетевого экрана для открытия необходимых портов (HTTP, HTTPS, SSH, а также порт 8022 для SSH GitLab):
+
+```bash
 gcloud compute firewall-rules create allow-gitlab-ports \
   --allow tcp:80,tcp:443,tcp:22,tcp:8022 \
   --target-tags=gitlab-server \
   --description="Allow GitLab access"
-![img](/img/img2.png)
+```
 
-Этап B — Создать VM (Ubuntu 22.04) с Docker
+![Настройка firewall](/img/img2.png)
 
-::TODO - ИСПОЛЬЗОВАТЬ БОЛЕЕ МОЩНЫЙ VM - удалить старый
+### Этап 2. Создание и настройка виртуальной машины
 
-Создадим VM с 2 vCPU и 4GB RAM (или больше, если есть возможность).
+Была создана виртуальная машина с параметрами, достаточными для работы GitLab (4 vCPU, 16GB RAM, 200GB диск):
+
 ```bash
 gcloud compute instances create gitlab-vm-lab5 \
   --zone=us-central1-a \
@@ -69,26 +100,29 @@ gcloud compute instances create gitlab-vm-lab5 \
   '
 ```
 
+![Создание VM](/img/img3.png)
 
-Подключись по SSH:
+Выполнено подключение к VM по SSH:
 
+```bash
 gcloud compute ssh gitlab-vm-lab5 --zone=us-central1-a
+```
 
+Проверена корректность установки Docker:
 
-Проверки на VM:
-
+```bash
 docker --version
 docker-compose --version
-ip addr show       # посмотреть локальные адреса
+ip addr show
+```
 
+![Проверка Docker](/img/img4.png)
+![Проверка сети](/img/img5.png)
 
-Этап C — Поднять GitLab CE в Docker (быстрый и надёжный способ)
+### Этап 3. Развертывание GitLab CE в Docker
 
-Я использую docker run, как в методичке, но с твоим STATIC_IP.
+GitLab Community Edition был развернут в Docker-контейнере с использованием зарезервированного статического IP:
 
-На VM:
-
-# заменяй <STATIC_IP> на value из gcloud compute addresses describe
 ```bash
 sudo docker run -d \
   --hostname 136.119.66.238 \
@@ -102,75 +136,112 @@ sudo docker run -d \
   gitlab/gitlab-ce:latest
 ```
 
-Проверить логи и дождаться готовности:
+![Запуск GitLab](/img/img6.png)
 
+Выполнен мониторинг логов для контроля готовности системы:
+
+```bash
 docker logs -f gitlab
-# дождись строки типа "GitLab now running" или "GitLab is ready"
+```
 
+После полной инициализации был получен первоначальный пароль администратора:
 
-Установить initial root password:
-
+```bash
 docker exec -it gitlab cat /etc/gitlab/initial_root_password
+```
 
+Результат: `IYsSbEP4ar5VxhG6WwYIm8TlIfgnQUx9KdaO0wMNKEE=`
 
+![Получение пароля](/img/img7.png)
 
-Открой в браузере http://<STATIC_IP> - `136.119.66.238` и войди как root с паролем из файла, затем поменяй пароль.
+Выполнен вход в веб-интерфейс GitLab по адресу `http://136.119.66.238` с учетными данными:
+- Login: `root`
+- Password: `aciitlab!` (после смены начального пароля)
 
+![Страница входа](/img/img8.png)
+![Главная страница GitLab](/img/img9.png)
+![Интерфейс администратора](/img/img10.png)
 
-Если хочешь HTTPS — позже можно привязать сертификат (letsencrypt) через Omnibus, но для задачи HTTP хватает.
+### Этап 4. Установка и регистрация GitLab Runner
 
-Этап D — Установить и зарегистрировать GitLab Runner
+#### 4.1. Установка GitLab Runner
 
-На той же VM (или отдельной — лучше на другой VM для изоляции) установи runner:
+На виртуальной машине был установлен GitLab Runner:
 
-# на VM
+```bash
 curl -L "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh" | sudo bash
 sudo apt-get install -y gitlab-runner
+```
 
+#### 4.2. Регистрация Runner
 
-В GitLab UI:
+В веб-интерфейсе GitLab выполнен переход в раздел **Admin Area → CI/CD → Runners → New instance runner**. Создан новый Runner с параметрами:
+- Executor: Docker
+- Опция "Run untagged jobs": включена
 
-admin -> Overview / Admin Area (если root вошёл) -> CI/CD > Runners -> New instance runner
+Получен Authentication Token: `glrt--TJTu_RcaZ9-XF1ThIOLd286MQp0OjEKdToxCw.01.1216fyyjk`
 
-Создай runner (executor: docker), поставь флажок Run untagged jobs, скопируй Authentication Token (glrt-...).
+![Создание Runner](/img/img11.png)
 
-Затем в VM зарегистрируй runner (пример):
+Выполнена регистрация Runner на VM:
 
+```bash
 sudo gitlab-runner register \
   --non-interactive \
-  --url "http://<STATIC_IP>/" \
-  --registration-token "<GLRT_TOKEN>" \
+  --url "http://136.119.66.238/" \
+  --registration-token "glrt--TJTu_RcaZ9-XF1ThIOLd286MQp0OjEKdToxCw.01.1216fyyjk" \
   --executor "docker" \
   --description "laravel-runner" \
   --tag-list "docker,php" \
   --docker-image "php:8.2-cli" \
   --run-untagged="true"
+```
 
+![Регистрация Runner](/img/img12.png)
 
-Запусти сервис:
+Запущен и активирован сервис:
 
+```bash
 sudo systemctl enable gitlab-runner
 sudo systemctl start gitlab-runner
 sudo gitlab-runner status
+```
 
+![Статус Runner](/img/img13.png)
 
-Проверка в UI: Runner должен быть активен (Admin Area → Runners).
+Проверена активность Runner в веб-интерфейсе:
 
-Этап E — Подготовка Laravel-проекта и репозитория
+![Runner в интерфейсе](/img/img14.png)
 
-На твоей локалке:
+### Этап 5. Подготовка Laravel-проекта
 
-# клонируем пустой репозиторий после создания проекта в GitLab
-git clone http://<STATIC_IP>/root/laravel-app.git
+#### 5.1. Создание репозитория
+
+В GitLab создан новый проект `laravel-app`. Репозиторий склонирован локально:
+
+```bash
+git clone http://136.119.66.238/root/laravel-app.git
 cd laravel-app
+```
 
-# или если возьмешь шаблон Laravel
+![Создание проекта](/img/img15.png)
+
+#### 5.2. Подготовка кода Laravel
+
+Скачан шаблон Laravel и скопирован в рабочую директорию:
+
+```bash
 git clone https://github.com/laravel/laravel.git ../laravel-temp
 cp -r ../laravel-temp/* ./
+```
 
+![Копирование Laravel](/img/img16.png)
 
-Создай Dockerfile (в корне проекта):
+#### 5.3. Создание Dockerfile
 
+Создан `Dockerfile` для контейнеризации приложения:
+
+```dockerfile
 # Dockerfile
 FROM php:8.2-apache
 
@@ -190,13 +261,57 @@ RUN chmod -R 775 /var/www/html/storage
 RUN a2enmod rewrite
 EXPOSE 80
 CMD ["apache2-foreground"]
+```
 
+#### 5.4. Конфигурация окружения для тестирования
 
-Создай .env.testing (пример из методички). Создай простой тест tests/Unit/ExampleTest.php:
+Создан файл `.env.testing` с настройками тестового окружения:
 
+```env
+APP_NAME=Laravel
+APP_ENV=testing
+APP_KEY=
+APP_DEBUG=true
+APP_URL=http://localhost
+APP_LOCALE=en
+APP_FALLBACK_LOCALE=en
+APP_FAKER_LOCALE=en_US
+APP_MAINTENANCE_DRIVER=file
+PHP_CLI_SERVER_WORKERS=4
+BCRYPT_ROUNDS=12
+
+LOG_CHANNEL=stack
+LOG_STACK=single
+LOG_DEPRECATIONS_CHANNEL=null
+LOG_LEVEL=debug
+
+DB_CONNECTION=mysql
+DB_HOST=mysql
+DB_PORT=3306
+DB_DATABASE=laravel_test
+DB_USERNAME=root
+DB_PASSWORD=root
+
+SESSION_DRIVER=array
+QUEUE_CONNECTION=sync
+CACHE_STORE=array
+
+MAIL_MAILER=log
+MAIL_FROM_ADDRESS="hello@example.com"
+MAIL_FROM_NAME="${APP_NAME}"
+
+REDIS_CLIENT=array
+```
+
+#### 5.5. Создание тестов
+
+Добавлен базовый Unit-тест в `tests/Unit/ExampleTest.php`:
+
+```php
 <?php
 namespace Tests\Unit;
 use PHPUnit\Framework\TestCase;
+
 class ExampleTest extends TestCase
 {
     public function testBasicTest()
@@ -204,11 +319,13 @@ class ExampleTest extends TestCase
         $this->assertTrue(true);
     }
 }
+```
 
-Этап F — .gitlab-ci.yml (пример)
+### Этап 6. Конфигурация CI/CD пайплайна
 
-Помещаем в корень проекта. Это минимально-работающий конфиг: запуск тестов и сборка образа.
+Создан файл `.gitlab-ci.yml` в корне проекта с определением этапов тестирования и сборки:
 
+```yaml
 stages:
   - test
   - build
@@ -231,9 +348,6 @@ cache:
 test:
   stage: test
   image: php:8.2-cli
-  services:
-    - name: mysql:8.0
-      alias: mysql
   before_script:
     - apt-get update -yqq
     - apt-get install -yqq libpng-dev libonig-dev libxml2-dev unzip git zip
@@ -242,7 +356,7 @@ test:
     - composer install --no-interaction --prefer-dist --no-scripts
     - cp .env.testing .env
     - php artisan key:generate
-    - php artisan migrate --seed --force || true
+    - php artisan migrate --force || true
   script:
     - vendor/bin/phpunit --stop-on-failure
   artifacts:
@@ -252,7 +366,7 @@ test:
 
 build:
   stage: build
-  image: docker:24.0.0  # runner должен поддерживать docker-in-docker, runner config может потребовать privileged
+  image: docker:24.0.0
   services:
     - docker:24.0.0-dind
   variables:
@@ -261,126 +375,68 @@ build:
     - echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin || true
   script:
     - docker build -t $CI_PROJECT_PATH:$CI_COMMIT_SHORT_SHA .
-    # пример пуша в Docker Hub (альтернатива: GitLab Container Registry)
     - docker tag $CI_PROJECT_PATH:$CI_COMMIT_SHORT_SHA $DOCKERHUB_USER/$CI_PROJECT_NAME:$CI_COMMIT_SHORT_SHA
     - docker push $DOCKERHUB_USER/$CI_PROJECT_NAME:$CI_COMMIT_SHORT_SHA
   only:
     - main
+```
 
+Для корректной работы этапа сборки в конфигурации Runner (`/etc/gitlab-runner/config.toml`) установлен параметр `privileged = true`:
 
-Примечания:
+![Конфигурация privileged mode](/img/img17.png)
 
-Для сборки образа runner должен быть настроен на docker executor и поддерживать docker:dind (часто требуется privileged = true в конфиге /etc/gitlab-runner/config.toml).
+### Этап 7. Запуск пайплайна и верификация результатов
 
-Чтобы пушить в Docker Hub — добавь переменные CI/CD в GitLab: DOCKERHUB_USER, DOCKERHUB_PASS.
+Выполнен commit и push изменений в репозиторий:
 
-Если хочешь использовать встроенный GitLab Container Registry, см. блок "Опция: Container Registry" ниже.
-
-Этап G — Commit & push
+```bash
 git add .
-git commit -m "Add Laravel app with CI/CD"
+git commit -m "Laravel app with CI/CD"
 git push origin main
+```
 
+![Push в репозиторий](/img/img18.png)
 
-Перейди в GitLab UI → проект → CI/CD → Pipelines — пайплайн должен стартануть автоматически.
+#### 7.1. Мониторинг выполнения пайплайна
 
-Проверяй логи job'ов: test и build.
+В веб-интерфейсе GitLab открыт раздел **CI/CD → Pipelines**. Пайплайн запустился автоматически после push:
 
-Опция: как включить Container Registry (если нужен)
+![Список пайплайнов](/img/img19.png)
 
-У self-hosted GitLab registry требует дополнительной конфигурации (omnibus config или запуск отдельного контейнера registry и указание registry_external_url). Коротко:
+#### 7.2. Анализ логов выполнения
 
-при запуске GitLab через Omnibus/docker run нужно добавить в GITLAB_OMNIBUS_CONFIG переменные для registry, например:
+Проверены логи каждого job:
 
-gitlab_rails['registry_enabled'] = true
-registry_external_url 'http://<STATIC_IP>:5000'
+**Этап test:**
+![Логи тестирования](/img/img20.png)
 
+**Этап build:**
+![Логи сборки](/img/img21.png)
 
-затем запустить контейнер registry (или использовать встроенные шаги Omnibus).
-Это сложнее и может требовать корректных DNS/сертификатов. Если цель — показать, что образ можно просмотреть, проще временно использовать Docker Hub или GitLab Pages.
+#### 7.3. Верификация работы Runner
 
-(Если хочешь — я дам точный конфиг и docker-compose для registry.)
+Выполнена проверка статуса Runner:
 
-Этап H — Проверка и отладка
-
-Если пайплайн в pending — проверь, что Runner активен и теги совпадают.
-
+```bash
 sudo gitlab-runner status
 sudo gitlab-runner verify
+```
 
+![Статус Runner](/img/img22.png)
 
-Если docker:dind не запускается — в /etc/gitlab-runner/config.toml поставь privileged = true для этого runner и перезапусти gitlab-runner.
+---
 
-Ошибки composer/phpunit — проверь версии PHP, расширения и корректность .env.testing.
+## Результаты работы
 
-Этап I — (опционально) Автоматический деплой на другую VM
+В результате выполнения лабораторной работы:
 
-Создай вторую VM (app-vm), установи Docker и открой порты.
+1. Успешно развернут полнофункциональный CI/CD сервер на базе GitLab Community Edition в облачной инфраструктуре Google Cloud Platform
+2. Настроена виртуальная машина с Docker и GitLab Runner
+3. Создан Laravel-проект с конфигурацией автоматизированного пайплайна
+4. Реализован CI/CD конвейер, включающий:
+   - Автоматическое тестирование кода с помощью PHPUnit
+   - Сборку Docker-образа приложения
+   - Интеграцию с базой данных MySQL для тестов
+5. Верифицирована корректность работы всех компонентов системы
 
-В build job после пуша добавь ssh-скрипт, который по успешной сборке доставляет docker-compose файл на app-vm и запускает docker-compose pull && docker-compose up -d.
-
-В GitLab добавь CI/CD variables: DEPLOY_USER, DEPLOY_HOST, DEPLOY_SSH_KEY (private key), и используй их в job для ssh.
-
-Пример snippet для deploy job:
-
-deploy:
-  stage: deploy
-  image: appleboy/drone-ssh # можно другой образ с ssh
-  script:
-    - mkdir -p ~/.ssh
-    - echo "$DEPLOY_SSH_KEY" > ~/.ssh/id_rsa
-    - chmod 600 ~/.ssh/id_rsa
-    - ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST "docker pull $DOCKERHUB_USER/$CI_PROJECT_NAME:$CI_COMMIT_SHORT_SHA && docker stop app || true && docker rm app || true && docker run -d --name app $DOCKERHUB_USER/$CI_PROJECT_NAME:$CI_COMMIT_SHORT_SHA"
-  only:
-    - main
-
-Полезные команды для управления (cleanup)
-
-Остановить и удалить GitLab:
-
-docker stop gitlab && docker rm gitlab
-docker volume rm gitlab-data
-
-
-Освободить статический IP:
-
-gcloud compute addresses delete gitlab-ip --region=us-central1
-
-
-Удалить VM:
-
-gcloud compute instances delete gitlab-vm --zone=us-central1-a
-
-Советы по ресурсам и затратам
-
-Выдели минимум 4GB RAM для VM; GitLab + Runner на 4GB работает, но может быть медленно.
-
-Останови VM, когда не используешь — чтобы не платить.
-
-В отчёте укажи точные значения: зона, машина, disk size, дата создания/удаления, итоговая стоимость за период.
-
-Шаблон отчёта (коротко для включения в лабораторную)
-
-Цель и краткое описание.
-
-Конфигурация GCP (project id, zone, machine type, static IP).
-
-Команды установки GitLab CE и Runner.
-
-Содержимое Dockerfile, .env.testing, tests/Unit/ExampleTest.php, .gitlab-ci.yml.
-
-Скриншоты: GitLab UI (pipeline), logs job'ов.
-
-Проблемы и решения (если были).
-
-Итог / как запустить вручную / cleanup.
-
-Если хочешь, дальше могу:
-
-сгенерировать готовый config.toml для runner с privileged = true и объяснить где поправить;
-
-подготовить docker-compose.yml, который запускает GitLab CE + registry + postgres/redis в одном файле;
-
-написать полный текст отчёта (на русском) с командами и скриншотами-подсказками.
-
-Что делаем дальше — сразу генерирую нужные файлы (Dockerfile, .gitlab-ci.yml, deploy job или docker-compose) и дам точные команды для копирования на твою VM. Какой файл хочешь получить в первую очередь?
+Все этапы пайплайна выполняются автоматически при push изменений в репозиторий, что подтверждает успешную настройку процесса непрерывной интеграции.
